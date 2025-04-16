@@ -4,52 +4,24 @@ import java.net.URL;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Scanner;
+import java.util.*;
+
 
 public class BillPlanner {
 
-    // Class representing a Bill
-    public static class Bill {
-        String date;       // Date grabbed from the web (or fallback)
-        String name;
-        double cost;
-        boolean recurring;
-        String frequency;  // "monthly" or "yearly" (if recurring)
-
-        public Bill(String date, String name, double cost, boolean recurring, String frequency) {
-            this.date = date;
-            this.name = name;
-            this.cost = cost;
-            this.recurring = recurring;
-            this.frequency = frequency;
-        }
-
-        // Convert bill information to a CSV record (comma separated)
-        public String toCSV() {
-            return date + "," + name + "," + cost + "," + recurring + "," + frequency;
-        }
-
-        // Create a Bill object from a CSV line
-        public static Bill fromCSV(String line) {
-            String[] parts = line.split(",");
-            if (parts.length < 5)
-                return null;
-            String date = parts[0];
-            String name = parts[1];
-            double cost = Double.parseDouble(parts[2]);
-            boolean recurring = Boolean.parseBoolean(parts[3]);
-            String frequency = parts[4];
-            return new Bill(date, name, cost, recurring, frequency);
+    public static void saveBillsToCSV(List<Bill> bills, String filename) {
+        try (PrintWriter pw = new PrintWriter(new FileWriter(filename))) {
+            // Write header
+            pw.println("Date,BillName,Cost,Recurring,Frequency");
+            for (Bill b : bills) {
+                pw.println(b.toCSV());
+            }
+        } catch (IOException e) {
+            System.out.println("Error saving to file: " + e.getMessage());
         }
     }
 
-    /**
-     * Fetches the current date/time from a web API.
-     * Connects to WorldTimeAPI for the America/Denver timezone.
-     * If there is an error, falls back to the local system time.
-     */
+
     public static String getCurrentDateFromWeb() {
         String apiUrl = "http://worldtimeapi.org/api/timezone/America/Denver";
         try {
@@ -83,29 +55,22 @@ public class BillPlanner {
         // Fallback to system date/time
         return LocalDateTime.now().toString();
     }
-
-    // Saves the list of bills into a CSV file.
-    public static void saveBillsToCSV(List<Bill> bills, String filename) {
-        try (PrintWriter pw = new PrintWriter(new FileWriter(filename))) {
-            // Write header
-            pw.println("Date,BillName,Cost,Recurring,Frequency");
-            for (Bill b : bills) {
-                pw.println(b.toCSV());
-            }
-        } catch (IOException e) {
-            System.out.println("Error saving to file: " + e.getMessage());
-        }
-    }
+    // Class representing a Bill
+    
 
     // Loads bill records from a CSV file.
     public static List<Bill> loadBillsFromCSV(String filename) {
         List<Bill> bills = new ArrayList<>();
         try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
             String line = br.readLine(); // skip header
-            while ((line = br.readLine()) != null) {
+            if (line != null && line.startsWith("Date,")) {
+                line = br.readLine();
+            }
+            
+            while (line != null) {
                 Bill b = Bill.fromCSV(line);
-                if (b != null)
-                    bills.add(b);
+                if (b != null) bills.add(b);
+                line = br.readLine();
             }
         } catch (IOException e) {
             System.out.println("Error loading from file: " + e.getMessage());
@@ -119,14 +84,14 @@ public class BillPlanner {
      * the method appends a version number (e.g., "_v2") and increases the version
      * until an unused file name is found.
      */
-    public static String generateBackupFileName() {
+    public static String generateBackupFileName(boolean modifying) {
         LocalDate today = LocalDate.now();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM-dd-yy");
         String baseName = today.format(formatter);
         String filename = baseName + ".csv";
         File file = new File(filename);
         int version = 2;
-        while (file.exists()) {
+        while (file.exists() && !modifying) {
             filename = baseName + "_v" + version + ".csv";
             file = new File(filename);
             version++;
@@ -156,7 +121,8 @@ public class BillPlanner {
         }
     }
 
-    public static void main(String[] args) {
+    private static void ui(){
+        boolean modifying = false;
         Scanner scanner = new Scanner(System.in);
         List<Bill> bills = new ArrayList<>();
 
@@ -168,8 +134,27 @@ public class BillPlanner {
         scanner.nextLine(); // Consume newline
 
         if (option == 1) {
-            System.out.print("Enter the file name to load: ");
-            String filename = scanner.nextLine();
+            modifying = true;
+            short fileinx = 1;
+            System.out.println("Available CSV files:");
+            File dir = new File(".");
+            File[] files = dir.listFiles((d, name) -> name.toLowerCase().endsWith(".csv"));
+
+            if (files != null && files.length > 0) {
+                for (File f : files){
+
+                    System.out.println(fileinx + "- " + f.getName());
+                    fileinx++; 
+                }}
+                    
+            else {
+                System.out.println("No CSV files found in current directory.");
+                ui();
+            }
+            System.out.print("Enter the file number to load: ");
+
+            String filename = files[scanner.nextInt() - 1].getName();
+            scanner.nextLine();   
             bills = loadBillsFromCSV(filename);
             if (bills.size() > 0) {
                 System.out.println("Loaded " + bills.size() + " bills from file.");
@@ -179,9 +164,8 @@ public class BillPlanner {
         } else if (option == 2) {
             System.out.println("Creating a new bills file.");
         } else {
-            System.out.println("Invalid option. Exiting.");
-            scanner.close();
-            return;
+            System.out.println("Invalid option.");
+            ui();
         }
 
         // Allow the user to add new bills.
@@ -201,14 +185,14 @@ public class BillPlanner {
             String rec = scanner.nextLine().trim();
             boolean recurring = rec.equalsIgnoreCase("yes") || rec.equalsIgnoreCase("y");
 
-            String frequency = "";
+            String frequency = "null";
             if (recurring) {
                 System.out.print("Is it monthly or yearly? ");
                 frequency = scanner.nextLine().trim();
             }
 
             // Get the current date from the web (or fallback)
-            String date = getCurrentDateFromWeb();
+            String date =  getCurrentDateFromWeb();
             Bill newBill = new Bill(date, name, cost, recurring, frequency);
             bills.add(newBill);
         }
@@ -220,10 +204,14 @@ public class BillPlanner {
         double totalNonRecurring = 0;
         for (Bill b : bills) {
             if (b.recurring) {
-                if (b.frequency.equalsIgnoreCase("monthly")) {
+                if (b.frequency.equalsIgnoreCase("monthly")||b.frequency.equalsIgnoreCase("m")) {
                     totalRecurring += b.cost;
-                } else if (b.frequency.equalsIgnoreCase("yearly")) {
+                } else if (b.frequency.equalsIgnoreCase("yearly")||b.frequency.equalsIgnoreCase("y")) {
                     totalRecurring += b.cost;
+                }
+                else{
+                    System.err.println("Enter in the format of Monthly or Yearly");
+                    ui();
                 }
             } else {
                 totalNonRecurring += b.cost;
@@ -254,11 +242,18 @@ public class BillPlanner {
         // the file name is generated automatically in the desired format.
         
         
-        String filename = generateBackupFileName();
+        String filename = generateBackupFileName(modifying);
         saveBillsToCSV(bills, filename);
         System.out.println("Bills saved to " + filename);
         
 
         scanner.close();
     }
+    
+    public static void main(String[] args) {
+        ui();
+        
 }
+}
+    
+    
